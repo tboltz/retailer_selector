@@ -16,7 +16,7 @@ from .config import (
 from .gsheet import download_product_map, upload_product_map, download_gsheet_as_xlsx
 from .workbook import scan_workbook_async
 from .emailer import send_email_with_attachment_async
-
+secrets_path=r"C:\Users\suzan\Projects\retailer_selector\secrets.json"
 
 async def run_scan_from_gsheet_and_email(
     workbook_path: Path,
