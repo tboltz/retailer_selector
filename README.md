@@ -24,7 +24,7 @@ A Python-based retail arbitrage automation tool that monitors product availabili
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/tboltz/retailer_selector.git
+git clone <repository-url>
 cd retailer_selector
 ```
 
@@ -117,7 +117,7 @@ python -m orchestrator
 python -m orchestrator [OPTIONS]
 
 Options:
-  --workbook-path PATH    Path to local XLSX workbook to overwrite
+  --workbook-path PATH    Path where the XLSX workbook will be saved/updated
                          (default: configured in config.py)
   
   --secrets-path PATH     Path to secrets.json file
@@ -271,7 +271,7 @@ python -m orchestrator --limit 5 2>&1 | tee scan.log
 - Use `.gitignore` to exclude sensitive files:
   ```
   secrets.json
-  *-service-account.json
+  *service-account*.json
   *.xlsx
   ```
 - Rotate API keys periodically
