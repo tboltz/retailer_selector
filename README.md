@@ -1,6 +1,6 @@
 # Retailer Selector
 
-A Python-based retail arbitrage automation tool that monitors product availability and pricing across multiple retailer websites. The system downloads product data from Google Sheets, scrapes retailer websites asynchronously, analyzes pricing and stock data using AI, updates the tracking spreadsheet, and emails the results.
+A Python-based retail arbitrage automation tool that monitors product availability and pricing across multiple retailer websites. The system downloads product data from Google Sheets, scrapes retailer websites asynchronously, and analyzes pricing and stock data using AI. It then updates the tracking spreadsheet and emails the results.
 
 ## Features
 
@@ -76,7 +76,13 @@ SERVICE_ACCOUNT_FILE = Path("path/to/your/service-account.json")
 
 ### 3. Secrets Configuration
 
-Create a `secrets.json` file with your API keys and credentials:
+Create a `secrets.json` file with your API keys and credentials. You can use the provided template:
+
+```bash
+cp secrets.json.template secrets.json
+```
+
+Then edit `secrets.json` with your actual credentials:
 
 ```json
 {
@@ -92,14 +98,16 @@ Create a `secrets.json` file with your API keys and credentials:
 }
 ```
 
-Update the `DEFAULT_SECRETS_PATH` in `config.py` to point to your secrets file.
+Update the `DEFAULT_SECRETS_PATH` in `config.py` to point to your secrets file, or use the `--secrets-path` command-line option to specify a different location.
 
 ### 4. Workbook Path
 
-Update the `DEFAULT_WORKBOOK_PATH` in `config.py` to specify where the Excel workbook should be saved:
+Update the `DEFAULT_WORKBOOK_PATH` in `config.py` to specify where the Excel workbook should be saved, or use the `--workbook-path` command-line option for flexibility:
 ```python
 DEFAULT_WORKBOOK_PATH = Path("path/to/your/workbook.xlsx")
 ```
+
+**Note:** The paths in `config.py` serve as defaults and can be overridden using command-line arguments for greater flexibility.
 
 ## Usage
 
@@ -266,14 +274,19 @@ python -m orchestrator --limit 5 2>&1 | tee scan.log
 
 ## Security Notes
 
-- **Never commit `secrets.json`** or service account JSON files to version control
-- Store sensitive files outside the repository or use environment variables
-- Use `.gitignore` to exclude sensitive files:
+- **CRITICAL: Never commit `secrets.json`** or service account JSON files to version control
+- This repository includes a `secrets.json.template` file - copy and customize it for your use
+- Store sensitive files outside the repository or ensure they are listed in `.gitignore`
+- The `.gitignore` already includes:
   ```
   secrets.json
   *service-account*.json
   *.xlsx
   ```
+- If you accidentally commit secrets, immediately:
+  1. Rotate all exposed API keys and passwords
+  2. Remove the file from git history using `git filter-branch` or BFG Repo-Cleaner
+  3. Force push the cleaned history (be cautious with force pushes)
 - Rotate API keys periodically
 - Use restricted service accounts with minimal required permissions
 
