@@ -1,249 +1,302 @@
-# retail_selector/parsing.py
+"""
+retail_selector/parsing.py
+
+Hybrid HTML price & stock extractor.
+
+Core entry point:
+    hybrid_lookup_from_bee_result(product_id, description, retailer_key,
+                                  original_url, bee, debug=False) -> Dict[str, Any]
+
+This function consumes a single ScrapingBee result dict (as produced by
+scraping.scrapingbee_fetch_many) and returns a normalized dict used by
+workbook.scan_product_map_df_async.
+
+Design goals
+------------
+* Pattern-based parsing first (fast, no API cost).
+* Optional LLM ("AI HTML") refinement when enabled in config and when
+  the pattern layer is uncertain or clearly failed.
+* Always return a well-formed result dict so the caller never explodes
+  on missing keys.
+"""
+
 from __future__ import annotations
 
 import json
 import re
-import time
-from typing import Dict, Any, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Tuple
 
-from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+from bs4 import BeautifulSoup  # type: ignore
 
-# IMPORTANT: Do NOT import client directly (it freezes at None)
-# BAD: from .config import client, OPENAI_MODEL
-# GOOD:
 from . import config
 
 
-def parse_shopify_variant_json(page_text: str) -> Optional[Dict[str, Any]]:
-    if "inventory_quantity" not in page_text or '"price"' not in page_text:
-        return None
-    m = re.search(r'(\[\s*\{.*?"inventory_quantity".*?\}\s*\])', page_text, re.DOTALL)
-    if not m:
-        return None
+PRICE_RE = re.compile(
+    r"""(?<!\d)(\d{1,4}(?:[.,]\d{3})*(?:[.,]\d{2})|\d{1,4}(?:[.,]\d{2}))""",
+    re.VERBOSE,
+)
+
+IN_STOCK_POSITIVE = [
+    "in stock",
+    "available now",
+    "ready to ship",
+    "ships today",
+    "add to cart",
+    "add to basket",
+    "add to bag",
+]
+
+IN_STOCK_NEGATIVE = [
+    "out of stock",
+    "sold out",
+    "unavailable",
+    "backorder",
+    "preorder",
+    "pre-order",
+    "temporarily unavailable",
+]
+
+
+@dataclass
+class ParsedResult:
+    price: Optional[float]
+    stock: str  # "Y", "N", or ""
+    method: str
+    notes: str = ""
+
+
+def _safe_float(text: str) -> Optional[float]:
     try:
-        arr = json.loads(m.group(1))
-        if not isinstance(arr, list) or not arr:
-            return None
-        v = arr[0]
+        # normalize commas vs dots
+        cleaned = text.replace(",", "")
+        return float(cleaned)
     except Exception:
         return None
 
-    price = None
-    cents = v.get("price")
-    if isinstance(cents, (int, float)):
-        price = round(float(cents) / 100.0, 2)
 
-    qty = v.get("inventory_quantity")
-    available = v.get("available")
-
-    stock = None
-    if isinstance(available, bool):
-        stock = "Y" if available else "N"
-    elif isinstance(qty, (int, float)):
-        stock = "Y" if qty > 0 else "N"
-    return {"price": price, "stock": stock, "raw": v}
-
-
-def detect_retailer_family(url: str, html: str) -> str:
-    host = urlparse(url).netloc.lower()
-    if "amazon." in host:
-        return "amazon"
-    if "cdn.shopify.com" in html or "Shopify.theme" in html or "window.Shopify" in html:
-        return "shopify"
-    return "generic"
-
-
-def parse_jsonld_price_stock(html: str) -> Optional[Dict[str, Any]]:
-    soup = BeautifulSoup(html, "html.parser")
-
-    def _extract_prices_from_offers(offers):
-        prices = []
-
-        def _extract(obj):
-            if not isinstance(obj, dict):
-                return
-            p = obj.get("price")
-            if isinstance(p, (int, float)):
-                prices.append(float(p))
-            elif isinstance(p, str):
-                m = re.search(r"(\d+(?:\.\d{1,2})?)", p)
-                if m:
-                    try:
-                        prices.append(float(m.group(1)))
-                    except Exception:
-                        pass
-
-            pspec = obj.get("priceSpecification")
-            if isinstance(pspec, dict):
-                _extract(pspec)
-            elif isinstance(pspec, list):
-                for sub in pspec:
-                    _extract(sub)
-
-        if isinstance(offers, list):
-            for off in offers:
-                _extract(off)
-        else:
-            _extract(offers)
-        return prices
-
-    for script in soup.find_all("script", type="application/ld+json"):
+def _extract_price_from_jsonld(soup: BeautifulSoup) -> Optional[float]:
+    for tag in soup.find_all("script", type="application/ld+json"):
         try:
-            text = script.string if script.string else script.get_text()
-            data = json.loads(text or "")
+            data = json.loads(tag.string or "")
         except Exception:
             continue
 
-        nodes = [data] if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        # Flatten to a list of candidate nodes
+        nodes = []
+        if isinstance(data, list):
+            nodes = data
+        else:
+            nodes = [data]
+
         for node in nodes:
             if not isinstance(node, dict):
                 continue
-            kind = str(node.get("@type", "")).lower()
-            if kind not in ["product", "productgroup"]:
-                continue
 
-            offers = node.get("offers")
-            if not offers:
-                continue
+            # Product / Offer hierarchy
+            if node.get("@type") in ("Product", "ProductModel"):
+                offers = node.get("offers")
+                if isinstance(offers, dict):
+                    price = offers.get("price") or offers.get("lowPrice")
+                    if isinstance(price, str):
+                        p = _safe_float(price)
+                        if p is not None:
+                            return p
+                elif isinstance(offers, list):
+                    for offer in offers:
+                        if not isinstance(offer, dict):
+                            continue
+                        price = offer.get("price") or offer.get("lowPrice")
+                        if isinstance(price, str):
+                            p = _safe_float(price)
+                            if p is not None:
+                                return p
 
-            prices = _extract_prices_from_offers(offers)
-            if not prices:
-                continue
+            # Direct Offer node
+            if node.get("@type") in ("Offer", "AggregateOffer"):
+                price = node.get("price") or node.get("lowPrice")
+                if isinstance(price, str):
+                    p = _safe_float(price)
+                    if p is not None:
+                        return p
 
-            price = min(prices)
-
-            avail = ""
-            if isinstance(offers, dict):
-                avail = str(offers.get("availability", "") or "")
-            elif isinstance(offers, list) and offers:
-                first = offers[0]
-                if isinstance(first, dict):
-                    avail = str(first.get("availability", "") or "")
-
-            avail_lower = avail.lower()
-            stock = None
-            if "instock" in avail_lower:
-                stock = "Y"
-            elif any(k in avail_lower for k in ["outofstock", "soldout", "oos", "preorder", "backorder"]):
-                stock = "N"
-
-            return {"price": price, "stock": stock, "raw": node}
     return None
 
 
-def parse_generic_price_stock(html: str) -> Optional[Dict[str, Any]]:
+def _extract_price_from_meta(soup: BeautifulSoup) -> Optional[float]:
+    # Common HTML microdata / meta patterns
+    candidates = []
+
+    for tag in soup.find_all(attrs={"itemprop": "price"}):
+        if tag.has_attr("content"):
+            candidates.append(tag["content"])
+        if tag.string:
+            candidates.append(tag.string)
+
+    for tag in soup.find_all("meta", itemprop="price"):
+        if tag.has_attr("content"):
+            candidates.append(tag["content"])
+
+    for tag in soup.find_all("span", class_=re.compile("price", re.I)):
+        if tag.string:
+            candidates.append(tag.string)
+
+    for raw in candidates:
+        if not raw:
+            continue
+        m = PRICE_RE.search(raw)
+        if not m:
+            continue
+        p = _safe_float(m.group(1).replace("$", "").strip())
+        if p is not None:
+            return p
+
+    return None
+
+
+def _extract_price_from_text(soup: BeautifulSoup) -> Optional[float]:
+    # Look for something that looks like a main product price, biased toward "$"
+    text = soup.get_text(" ", strip=True)
+    # Restrict to first ~2000 characters to avoid footer spam
+    text = text[:2000]
+
+    # Prefer "$"-prefixed prices
+    dollar_prices = re.findall(r"\$\s*([0-9][0-9.,]*)", text)
+    for raw in dollar_prices:
+        p = _safe_float(raw)
+        if p is not None:
+            return p
+
+    # Fallback: any price-shaped number
+    for m in PRICE_RE.finditer(text):
+        p = _safe_float(m.group(1))
+        if p is not None:
+            return p
+
+    return None
+
+
+def _extract_stock_from_text(soup: BeautifulSoup) -> str:
+    text = soup.get_text(" ", strip=True).lower()
+
+    neg_hits = [kw for kw in IN_STOCK_NEGATIVE if kw in text]
+    pos_hits = [kw for kw in IN_STOCK_POSITIVE if kw in text]
+
+    if neg_hits and not pos_hits:
+        return "N"
+    if pos_hits and not neg_hits:
+        return "Y"
+    # Ambiguous or no signal
+    return ""
+
+
+def _pattern_parse(html: str) -> ParsedResult:
     soup = BeautifulSoup(html, "html.parser")
-    full_text = soup.get_text(" ", strip=True)
-    lower = full_text.lower()
 
-    stock = None
-    if any(s in lower for s in ["out of stock", "sold out", "unavailable", "backorder", "preorder", "coming soon"]):
-        stock = "N"
-    elif any(s in lower for s in ["in stock", "available now", "ready to ship", "add to cart", "add to basket"]):
-        stock = "Y"
+    # 1) JSON-LD
+    price = _extract_price_from_jsonld(soup)
+    if price is not None:
+        stock = _extract_stock_from_text(soup)
+        return ParsedResult(price=price, stock=stock, method="pattern_jsonld", notes="jsonld")
 
-    discount_kw = ["you save", "save ", "saving", "% off"]
-    original_kw = ["rrp", "r.r.p", "was ", "compare at", "compare-at", "list price", "retail price", "original price"]
-    sale_kw     = ["now", "now only", "our price", "sale", "special", "deal", "today", "promo", "offer"]
+    # 2) Meta / microdata
+    price = _extract_price_from_meta(soup)
+    if price is not None:
+        stock = _extract_stock_from_text(soup)
+        return ParsedResult(price=price, stock=stock, method="pattern_meta", notes="meta")
 
-    original_candidates, sale_candidates, generic_candidates = [], [], []
+    # 3) Text heuristics
+    price = _extract_price_from_text(soup)
+    stock = _extract_stock_from_text(soup)
+    if price is not None or stock:
+        return ParsedResult(price=price, stock=stock, method="pattern_text", notes="text")
 
-    for m in re.finditer(r"([£$€]\s*(\d{1,5}(?:\.\d{1,2})?))", full_text):
-        num_str = m.group(2)
-        try:
-            value = float(num_str)
-        except Exception:
-            continue
+    return ParsedResult(price=None, stock="", method="pattern_fail", notes="no_match")
 
-        start = max(0, m.start() - 60)
-        end   = min(len(lower), m.end() + 60)
-        ctx   = lower[start:end]
 
-        if any(kw in ctx for kw in discount_kw):
-            continue
+def _ai_parse(html: str, description: str, retailer_key: str) -> ParsedResult:
+    """
+    Ask the LLM to extract price & stock from a truncated HTML snippet.
 
-        if any(kw in ctx for kw in original_kw):
-            original_candidates.append(value)
-        elif any(kw in ctx for kw in sale_kw):
-            sale_candidates.append(value)
+    Returns ParsedResult; any exception becomes ParsedResult with price=None
+    and method='ai_error'.
+    """
+    if config.client is None:
+        return ParsedResult(
+            price=None,
+            stock="",
+            method="ai_error",
+            notes="openai_client_not_configured",
+        )
+
+    # Trim HTML to something sane
+    snippet = html
+    if len(snippet) > 16000:
+        snippet = snippet[:16000]
+
+    system_prompt = (
+        "You read messy HTML product pages and extract a single product price and stock status. "
+        "Focus only on the main product shown, not related items or ads."
+    )
+
+    user_prompt = f"""
+Product description (from spreadsheet): {description!r}
+Retailer key: {retailer_key}
+
+HTML snippet (truncated):
+<BEGIN_HTML>
+{snippet}
+<END_HTML>
+
+Return a JSON object with:
+  - price: number or null (in USD)
+  - in_stock: "Y", "N", or "" if uncertain
+"""
+
+    try:
+        resp = config.client.responses.create(
+            model=config.OPENAI_MODEL,
+            input=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+            max_output_tokens=256,
+            temperature=0,
+        )
+
+        content = resp.output[0].content[0].text  # type: ignore[attr-defined]
+        data = json.loads(content)
+
+        raw_price = data.get("price")
+        in_stock = data.get("in_stock") or ""
+
+        price: Optional[float]
+        if raw_price is None:
+            price = None
         else:
-            generic_candidates.append(value)
-
-    price = None
-    if sale_candidates:
-        price = min(sale_candidates)
-    elif generic_candidates:
-        price = min(generic_candidates)
-    else:
-        if original_candidates:
-            price = min(original_candidates)
-
-    if price is None:
-        m2 = re.search(r"(\d{1,5}\.\d{2})", full_text)
-        if m2:
             try:
-                price = float(m2.group(1))
+                price = float(raw_price)
             except Exception:
                 price = None
 
-    if price is None and stock is None:
-        return None
+        if in_stock not in ("Y", "N", ""):
+            in_stock = ""
 
-    return {
-        "price": price,
-        "stock": stock,
-        "source": "generic_sale_price",
-        "raw": {
-            "original_candidates": original_candidates,
-            "sale_candidates": sale_candidates,
-            "generic_candidates": generic_candidates,
-        },
-    }
+        return ParsedResult(
+            price=price,
+            stock=in_stock,
+            method="ai_html",
+            notes="ai_ok",
+        )
 
-
-def parse_html_price_stock(url: str, html: str) -> Optional[Dict[str, Any]]:
-    family = detect_retailer_family(url, html)
-
-    if family == "shopify":
-        shopify_res = parse_shopify_variant_json(html)
-        if shopify_res and (shopify_res["price"] is not None or shopify_res["stock"] is not None):
-            return {
-                "price": shopify_res["price"],
-                "stock": shopify_res["stock"],
-                "source": "shopify_variants",
-            }
-
-    jsonld_res = parse_jsonld_price_stock(html)
-    if jsonld_res:
-        return {
-            "price": jsonld_res["price"],
-            "stock": jsonld_res["stock"],
-            "source": "jsonld_product",
-        }
-
-    generic_res = parse_generic_price_stock(html)
-    if generic_res:
-        return {
-            "price": generic_res["price"],
-            "stock": generic_res["stock"],
-            "source": "generic_text",
-        }
-
-    return None
-
-
-def _clean_json_text(raw_text: str) -> str:
-    clean = raw_text.strip()
-    if clean.startswith("```"):
-        parts = clean.split("```")
-        if len(parts) >= 2:
-            clean = parts[1].strip()
-            if clean.lower().startswith("json"):
-                clean = clean[4:].strip()
-        if "```" in clean:
-            clean = clean.split("```")[0].strip()
-    return clean
+    except Exception as exc:
+        return ParsedResult(
+            price=None,
+            stock="",
+            method="ai_error",
+            notes=f"ai_exception:{type(exc).__name__}",
+        )
 
 
 def hybrid_lookup_from_bee_result(
@@ -254,129 +307,118 @@ def hybrid_lookup_from_bee_result(
     bee: Dict[str, Any],
     debug: bool = False,
 ) -> Dict[str, Any]:
+    """
+    Given a single ScrapingBee result dict, perform a hybrid (pattern + AI)
+    extraction of price & stock.
 
-    # FIXED: read the shared client
-    if config.client is None:
-        raise RuntimeError("OpenAI client not initialized. Call load_secrets() first.")
+    Parameters
+    ----------
+    product_id : str
+        ID from the Product↔Retailer Map sheet.
+    description : str
+        Human-readable product description.
+    retailer_key : str
+        Retailer identifier (matches the registry key).
+    original_url : str
+        URL as stored in the sheet.
+    bee : dict
+        A single item from scraping.scrapingbee_fetch_many:
+            {
+              "status_code": int,
+              "final_url": str,
+              "page_text": str,
+              "error": str | None,
+              "response_ms": float | None,
+            }
+    debug : bool
+        If True, include extra notes in the result.
+    """
+    status_code = bee.get("status_code")
+    final_url = bee.get("final_url") or original_url
+    html = bee.get("page_text") or ""
+    bee_error = bee.get("error") or ""
+    response_ms = bee.get("response_ms")
 
-    start = time.time()
+    # Base envelope returned to caller
+    result: Dict[str, Any] = {
+        "product_id": product_id,
+        "description": description,
+        "retailer_key": retailer_key,
+        "original_url": original_url,
+        "final_url": final_url,
+        "price": None,
+        "stock": "",
+        "status": "ai_error",      # historical naming; 'ai_ok' on success
+        "method": "http_error",
+        "response_ms": response_ms,
+        "error": "",
+        "http_status": status_code,
+        "debug_notes": "",
+    }
 
-    html = bee.get("page_text", "") or ""
-    final_url = bee.get("final_url", original_url)
-    bee_error = bee.get("error")
-
+    # 1) HTTP-level guardrails
     if bee_error:
-        elapsed_ms = int((time.time() - start) * 1000)
-        return {
-            "price": None,
-            "stock": None,
-            "url_used": final_url,
-            "notes": "",
-            "error": f"ScrapingBee error: {bee_error}",
-            "response_ms": elapsed_ms,
-            "status": "ai_error",
-            "method": "ai_html",
-        }
+        result["error"] = bee_error
+        result["method"] = "http_error"
+        result["debug_notes"] = f"bee_error:{bee_error}"
+        return result
 
-    parsed = parse_html_price_stock(final_url, html)
-    if parsed and (parsed["price"] is not None or parsed["stock"] is not None):
-        elapsed_ms = int((time.time() - start) * 1000)
-        return {
-            "price": parsed["price"],
-            "stock": parsed["stock"],
-            "url_used": final_url,
-            "notes": f"Parsed via {parsed['source']}.",
-            "error": None,
-            "response_ms": elapsed_ms,
-            "status": "ai_ok",
-            "method": "ai_html",
-        }
+    if status_code != 200:
+        result["error"] = f"http_{status_code}"
+        result["method"] = "http_error"
+        result["debug_notes"] = f"http_status:{status_code}"
+        return result
 
-    snippet = html[:15000]
+    if not html.strip():
+        result["error"] = "empty_html"
+        result["method"] = "empty_html"
+        result["debug_notes"] = "no_html"
+        return result
 
-    system_prompt = (
-        "You are a precise retail price and stock extractor. "
-        "Given raw HTML/text of a single product page, identify:\n"
-        "- The product's main CURRENT SELLING PRICE as shown on the page.\n"
-        "- Whether the product is in stock.\n\n"
-        "IMPORTANT RULES:\n"
-        "- Do NOT convert currencies. Return the numeric price exactly as it appears.\n"
-        "- Ignore discount amounts like 'Save £4.74', 'You save £X', or '% off'.\nl"
-        "- If you cannot find a reliable price, set price=null.\n\n"
-        "Return ONLY a JSON object."
-    )
+    # 2) Pattern-based parse
+    pattern_res = _pattern_parse(html)
 
-    user_prompt = f"""
-Product:
-- Product ID: {product_id}
-- Description: {description}
-- Retailer: {retailer_key}
-- URL: {final_url}
+    best = pattern_res
+    used_ai = False
 
-<page>
-{snippet}
-</page>
+    # Decide whether to invoke AI:
+    # * if pattern completely failed (no price, no stock)
+    # * or if config.USE_AI_HTML is True and we want refinement
+    use_ai = getattr(config, "USE_AI_HTML", False)
 
-Return JSON:
-{{
-  "price": <number or null>,
-  "in_stock": "Y" or "N" or "unknown",
-  "url_used": "{final_url}",
-  "notes": "<short explanation>"
-}}
-"""
+    if use_ai and (pattern_res.price is None and not pattern_res.stock):
+        ai_res = _ai_parse(html, description, retailer_key)
+        used_ai = True
 
-    try:
-        resp = config.client.responses.create(
-            model=config.OPENAI_MODEL,
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
+        # Prefer AI result if it gives us anything
+        if ai_res.price is not None or ai_res.stock:
+            best = ai_res
+        else:
+            # keep pattern_res (which is basically "fail") but carry AI error notes
+            best = ParsedResult(
+                price=None,
+                stock="",
+                method="ai_error",
+                notes=ai_res.notes or "ai_no_signal",
+            )
 
-        elapsed_ms = int((time.time() - start) * 1000)
-        raw_text = (resp.output_text or "").strip()
-        clean = _clean_json_text(raw_text)
-        data = json.loads(clean)
+    # 3) Populate final result
+    result["price"] = best.price
+    result["stock"] = best.stock
+    result["method"] = best.method
 
-        price = data.get("price")
-        in_stock = data.get("in_stock", "unknown")
-        notes = data.get("notes") or ""
+    if best.price is not None or best.stock:
+        result["status"] = "ai_ok"  # keep existing workbook logic happy
+    else:
+        result["status"] = "ai_error"
+        if not result["error"]:
+            result["error"] = "no_price_or_stock"
 
-        if isinstance(price, str):
-            m = re.search(r"(\d+(\.\d{1,2})?)", price)
-            price = float(m.group(1)) if m else None
+    if used_ai and "ai_exception" in best.notes:
+        # surface AI exception in error field
+        result["error"] = best.notes
 
-        if in_stock not in ["Y", "N", "unknown"]:
-            text = notes.lower()
-            if any(s in text for s in ["out of stock", "sold out", "unavailable"]):
-                in_stock = "N"
-            elif any(s in text for s in ["in stock", "available", "ready to ship"]):
-                in_stock = "Y"
-            else:
-                in_stock = "unknown"
+    if debug:
+        result["debug_notes"] = f"pattern={pattern_res.method}; ai_used={used_ai}; notes={best.notes}"
 
-        return {
-            "price": price,
-            "stock": None if in_stock == "unknown" else in_stock,
-            "url_used": final_url,
-            "notes": notes,
-            "error": None,
-            "response_ms": elapsed_ms,
-            "status": "ai_ok",
-            "method": "ai_html",
-        }
-
-    except Exception as e:
-        elapsed_ms = int((time.time() - start) * 1000)
-        return {
-            "price": None,
-            "stock": None,
-            "url_used": final_url,
-            "notes": "",
-            "error": f"AI HTML parse error: {e}",
-            "response_ms": elapsed_ms,
-            "status": "ai_error",
-            "method": "ai_html",
-        }
+    return result
