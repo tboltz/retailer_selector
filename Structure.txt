@@ -1,0 +1,13 @@
+retail_selector_app/
+├─ pyproject.toml              # or setup.cfg / requirements.txt
+├─ README.md
+├─ secrets.json                # or keep this in C:\Users\suzan\... as you do now
+└─ retail_selector/
+   ├─ __init__.py
+   ├─ config.py
+   ├─ gsheet.py
+   ├─ scraping.py
+   ├─ parsing.py
+   ├─ workbook.py
+   ├─ emailer.py
+   └─ orchestrator.py
