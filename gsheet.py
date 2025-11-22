@@ -1,3 +1,4 @@
+# retail_selector/gsheet.py
 from __future__ import annotations
 
 import json
@@ -12,17 +13,17 @@ import requests
 
 from .config import (
     SERVICE_ACCOUNT_FILE,
+ 
     MASTER_SHEET_ID,
     OUTPUT_SHEET_ID,
-    PRODUCT_MAP_TAB,
+    PRODUCT_MAP_TAB
 )
 
+# SCOPES just to be explicit here
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
-
-
 
 
 def get_google_clients():

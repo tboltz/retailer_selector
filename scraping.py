@@ -1,3 +1,4 @@
+# retail_selector/scraping.py
 from __future__ import annotations
 
 import asyncio
@@ -5,8 +6,8 @@ from typing import List, Dict, Any, Optional
 
 import aiohttp
 
-SCRAPINGBEE_BASE = "https://app.scrapingbee.com/api/v1"
 
+SCRAPINGBEE_BASE = "https://app.scrapingbee.com/api/v1"
 
 
 async def _scrapingbee_fetch_async(
@@ -24,12 +25,11 @@ async def _scrapingbee_fetch_async(
         params["render_js"] = "true"
 
     try:
-        timeout = aiohttp.ClientTimeout(total=30)
-        async with session.get(SCRAPINGBEE_BASE, params=params, timeout=timeout) as resp:
+        async with session.get(SCRAPINGBEE_BASE, params=params, timeout=30) as resp:
             status = resp.status
             text = await resp.text()
 
-            # ScrapingBee sometimes returns JSON like {"page_text": "..."}
+            # Sometimes Bee wraps in JSON
             import json as _json
             try:
                 data = _json.loads(text)
@@ -47,16 +47,6 @@ async def _scrapingbee_fetch_async(
                 "page_text": text,
                 "error": None if status == 200 else f"HTTP {status}",
             }
-
-    except asyncio.CancelledError:
-        # Python 3.12 treats this like BaseException; treat as a soft failure
-        return {
-            "status_code": -1,
-            "final_url": url,
-            "page_text": "",
-            "error": "request_cancelled",
-        }
-
     except Exception as e:
         return {
             "status_code": -1,
@@ -83,41 +73,19 @@ async def scrapingbee_fetch_many(
     async with aiohttp.ClientSession() as session:
         async def bound_fetch(i: int, url: str, use_js: bool):
             async with sem:
-                return i, await _scrapingbee_fetch_async(session, api_key, url, use_js)
+                res = await _scrapingbee_fetch_async(session, api_key, url, use_js)
+                return i, res
 
         tasks = [
             bound_fetch(i, url, use_js_flags[i])
             for i, url in enumerate(urls)
         ]
-
-        try:
-            raw_results = await asyncio.gather(*tasks, return_exceptions=True)
-        except asyncio.CancelledError:
-            # Treat whole batch as cancelled; return error stubs
-            return [
-                {
-                    "status_code": -1,
-                    "final_url": url,
-                    "page_text": "",
-                    "error": "batch_cancelled",
-                }
-                for url in urls
-            ]
+        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
     results: List[Optional[Dict[str, Any]]] = [None] * len(urls)
     for item in raw_results:
-        if isinstance(item, BaseException):
-            # Unexpected exception object; record as error
-            # (should be rare because _scrapingbee_fetch_async already catches)
-            idx = 0
-            results[idx] = {
-                "status_code": -1,
-                "final_url": urls[idx],
-                "page_text": "",
-                "error": repr(item),
-            }
+        if isinstance(item, Exception):
             continue
-
         idx, res = item
         results[idx] = res
 
@@ -130,5 +98,4 @@ async def scrapingbee_fetch_many(
                 "error": "unknown_async_error",
             }
 
-    return [r for r in results if r is not None]
-
+    return results
