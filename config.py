@@ -17,6 +17,7 @@ DEFAULT_WORKBOOK_PATH = Path(
     r"C:\Users\suzan\Projects\retailer_selector\SANDBOX Retail Arbitrage Targeting List.xlsx"
 )
 
+# Secrets file with ScrapingBee, OpenAI, SMTP, etc.
 DEFAULT_SECRETS_PATH = Path(
     r"C:\Users\suzan\Projects\retailer_selector\secrets.json"
 )
@@ -39,7 +40,6 @@ RETAILERS_TAB    = "Retailers"
 SERVICE_ACCOUNT_FILE = Path(
     r"C:\Users\suzan\Projects\retailer_selector\retail-selector-bot-294ddd38cfa6.json"
 )
-
 
 # Scraping concurrency
 MAX_CONCURRENCY = 20
