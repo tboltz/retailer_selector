@@ -9,27 +9,31 @@ from typing import Dict, Any, Optional
 from openai import OpenAI
 
 # -------------------------
+# Base project root
+# -------------------------
+
+# Compute root dynamically so you can move the folder without re-breaking stuff
+# This file is: C:\Users\suzan\Projects\card\retailer_selector\config.py
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+# -------------------------
 # Default local file paths
 # -------------------------
 
-# Local Excel workbook that the pipeline overwrites each run
-DEFAULT_WORKBOOK_PATH = Path(
-    r"C:\Users\suzan\Projects\retailer_selector\SANDBOX Retail Arbitrage Targeting List.xlsx"
-)
+# Local Excel workbook (if/when you revive XLSX mode)
+DEFAULT_WORKBOOK_PATH = PROJECT_ROOT / "SANDBOX Retail Arbitrage Targeting List.xlsx"
 
-# Secrets file with ScrapingBee, OpenAI, SMTP, etc.
-DEFAULT_SECRETS_PATH = Path(
-    r"C:\Users\suzan\Projects\retailer_selector\secrets.json"
-)
+# Default path for secrets.json
+DEFAULT_SECRETS_PATH = PROJECT_ROOT / "retailer_selector" / "secrets.json"
 
 # -------------------------
 # Google Sheets configuration
 # -------------------------
 
-# His master sheet (source of truth)
+# Master sheet (source of truth)
 MASTER_SHEET_ID = "1rSaOaq52CkWeB_1U62zhY0Xd7PQMLvaHbYGOnjAa6QA"
 
-# Your output sheet (where updated Product↔Retailer Map is written)
+# Output sheet (where updated Product↔Retailer Map is written)
 OUTPUT_SHEET_ID = "1PNLdCOzEL43KxvulsGk_L0aGNk5I0HIshsMkkQzwrGg"
 
 PRODUCT_MAP_TAB = "Product↔Retailer Map"
@@ -37,9 +41,7 @@ ACTIVE_WATCH_TAB = "Active Watch List"
 RETAILERS_TAB    = "Retailers"
 
 # Service account JSON for Google APIs
-SERVICE_ACCOUNT_FILE = Path(
-    r"C:\Users\suzan\Projects\retailer_selector\retail-selector-bot-294ddd38cfa6.json"
-)
+SERVICE_ACCOUNT_FILE = PROJECT_ROOT / "retailer_selector" / "retail-selector-bot-294ddd38cfa6.json"
 
 # Scraping concurrency
 MAX_CONCURRENCY = 20
@@ -48,12 +50,14 @@ MAX_CONCURRENCY = 20
 # OpenAI global client/model
 # -------------------------
 
-# These are set by load_secrets() and then read from other modules
 client: Optional[OpenAI] = None
 OPENAI_MODEL: str = "gpt-4o-mini"  # default; can be overridden via secrets.json
 
+# Toggle for HTML → AI parsing
+USE_AI_HTML: bool = True
 
-def load_secrets(secrets_path: Path | str) -> Dict[str, Any]:
+
+def load_secrets(secrets_path: Path | str | None = None) -> Dict[str, Any]:
     """
     Load secrets from JSON and initialize the OpenAI client + model name.
 
@@ -68,7 +72,10 @@ def load_secrets(secrets_path: Path | str) -> Dict[str, Any]:
       - EMAIL_FROM
       - EMAIL_TO
     """
-    global client, OPENAI_MODEL
+    global client, OPENAI_MODEL, USE_AI_HTML
+
+    if secrets_path is None:
+        secrets_path = DEFAULT_SECRETS_PATH
 
     secrets_path = Path(secrets_path)
     if not secrets_path.exists():
@@ -91,10 +98,14 @@ def load_secrets(secrets_path: Path | str) -> Dict[str, Any]:
     if missing:
         raise KeyError(f"secrets.json is missing keys: {missing}")
 
-    # Allow model override from secrets.json (e.g. 'gpt-4.1', 'o3-mini', your "codex max" deployment)
+    # Allow model override from secrets.json (e.g. 'gpt-4.1', 'gpt-4o-mini')
     OPENAI_MODEL = secrets.get("OPENAI_MODEL") or "gpt-4o-mini"
 
-    # Also surface keys via environment for any legacy code
+    # Optional toggle for AI html parsing (default True)
+    if "USE_AI_HTML" in secrets:
+        USE_AI_HTML = bool(secrets["USE_AI_HTML"])
+
+    # Surface keys via environment for any legacy code
     os.environ["SCRAPINGBEE_API_KEY"] = secrets["SCRAPINGBEE_API_KEY"]
     os.environ["OPENAI_API_KEY"] = secrets["OPENAI_API_KEY"]
 
