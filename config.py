@@ -5,7 +5,7 @@ import os
 import json
 from pathlib import Path
 from typing import Dict, Any, Optional
-
+import time
 from openai import OpenAI
 
 # -------------------------
@@ -15,13 +15,13 @@ from openai import OpenAI
 # Compute root dynamically so you can move the folder without re-breaking stuff
 # This file is: C:\Users\suzan\Projects\card\retailer_selector\config.py
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
+current_time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 # -------------------------
 # Default local file paths
 # -------------------------
 
 # Local Excel workbook (if/when you revive XLSX mode)
-DEFAULT_WORKBOOK_PATH = PROJECT_ROOT / "SANDBOX Retail Arbitrage Targeting List.xlsx"
+DEFAULT_WORKBOOK_PATH = PROJECT_ROOT / f"SANDBOX Retail Arbitrage Targeting List {current_time_str}.xlsx"
 
 # Default path for secrets.json
 DEFAULT_SECRETS_PATH = PROJECT_ROOT / "retailer_selector" / "secrets.json"
