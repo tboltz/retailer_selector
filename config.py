@@ -15,13 +15,13 @@ from openai import OpenAI
 # Compute root dynamically so you can move the folder without re-breaking stuff
 # This file is: C:\Users\suzan\Projects\card\retailer_selector\config.py
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-current_time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
 # -------------------------
 # Default local file paths
 # -------------------------
-
+time_str = time.strftime("%Y%m%d-%H%M%S")
 # Local Excel workbook (if/when you revive XLSX mode)
-DEFAULT_WORKBOOK_PATH = PROJECT_ROOT / f"SANDBOX Retail Arbitrage Targeting List {current_time_str}.xlsx"
+DEFAULT_WORKBOOK_PATH = PROJECT_ROOT / f"Retail Arbitrage Targeting List {time_str}.xlsx"
 
 # Default path for secrets.json
 DEFAULT_SECRETS_PATH = PROJECT_ROOT / "retailer_selector" / "secrets.json"
@@ -44,7 +44,7 @@ RETAILERS_TAB    = "Retailers"
 SERVICE_ACCOUNT_FILE = PROJECT_ROOT / "retailer_selector" / "retail-selector-bot-294ddd38cfa6.json"
 
 # Scraping concurrency
-MAX_CONCURRENCY = 20
+MAX_CONCURRENCY = 10
 
 # -------------------------
 # OpenAI global client/model
