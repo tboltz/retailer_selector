@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Iterable, Optional
 
 import aiohttp
 
+# Base ScrapingBee endpoint
 SCRAPINGBEE_ENDPOINT = "https://app.scrapingbee.com/api/v1/"
 DEFAULT_TIMEOUT = 60  # seconds
 
@@ -21,11 +22,13 @@ def _build_params(
 ) -> Dict[str, Any]:
     """
     Build the ScrapingBee query parameters, allowing caller-provided overrides.
+
+    Defaults:
+      - render_js = false  (faster & cheaper; caller can override per-call)
     """
     base: Dict[str, Any] = {
         "api_key": api_key,
         "url": url,
-        # We default to *no JS render* for speed; caller can override.
         "render_js": "false",
     }
     if extra_params:
@@ -49,6 +52,7 @@ async def _fetch_one_with_retries(
     (429, 500, 502, 503, 504).
 
     Normalized return shape:
+
         {
           "status_code": int | None,
           "final_url": str | None,
@@ -73,7 +77,6 @@ async def _fetch_one_with_retries(
     last_exception_type: Optional[str] = None
     start_time = time.perf_counter()
 
-    # We measure from first attempt to final result – full wall clock cost.
     for attempt in range(1, max_retries + 1):
         try:
             async with session.get(
@@ -87,6 +90,7 @@ async def _fetch_one_with_retries(
                     text = await resp.text()
                 except Exception:
                     text = ""
+
                 elapsed_ms = (time.perf_counter() - start_time) * 1000.0
                 final_url = str(resp.url)
 
@@ -128,7 +132,7 @@ async def _fetch_one_with_retries(
                         "last_exception_type": last_exception_type,
                     }
 
-                # Soft 4xx (404/410 etc) or success:
+                # Soft 4xx or success:
                 # keep HTML and do NOT set 'error' so parser/AI can run.
                 return {
                     "status_code": status,
@@ -145,6 +149,7 @@ async def _fetch_one_with_retries(
             last_exception_type = type(exc).__name__
             last_error = f"ScrapingBee timeout: {exc!r}"
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+
             if attempt == max_retries:
                 return {
                     "status_code": None,
@@ -169,6 +174,7 @@ async def _fetch_one_with_retries(
             last_exception_type = type(exc).__name__
             last_error = f"ScrapingBee exception: {type(exc).__name__}: {exc}"
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+
             if attempt == max_retries:
                 return {
                     "status_code": None,
@@ -209,23 +215,24 @@ async def scrapingbee_fetch_many(
     max_retries: int = 3,
     timeout: int = DEFAULT_TIMEOUT,
     base_backoff: float = 1.5,
-    extra_params: Optional[Dict[str, Any]] = None,
+    extra_params: Dict[str, str] = {"render_js": "true"},
     headers: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Fetch many URLs via ScrapingBee concurrently with a concurrency limit.
 
     Returns a list of result dicts in the same order as `urls`, each shaped like:
-      {
-        "status_code": int | None,
-        "final_url": str | None,
-        "page_text": str | None,
-        "error": str | None,
-        "response_ms": float | None,
-        "request_url": str,
-        "attempts": int,
-        "last_exception_type": str | None,
-      }
+
+        {
+          "status_code": int | None,
+          "final_url": str | None,
+          "page_text": str | None,
+          "error": str | None,
+          "response_ms": float | None,
+          "request_url": str,
+          "attempts": int,
+          "last_exception_type": str | None,
+        }
 
     Parameters
     ----------
@@ -243,6 +250,7 @@ async def scrapingbee_fetch_many(
         Base backoff in seconds; actual sleep is base_backoff * attempt.
     extra_params:
         Optional additional ScrapingBee query parameters applied to every request.
+        Example: {"render_js": "true"} for JS-heavy retailers.
     headers:
         Optional HTTP headers sent with every request.
     """
