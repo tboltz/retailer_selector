@@ -14,6 +14,26 @@ DEFAULT_TIMEOUT = 60  # seconds
 TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
+def _build_params(
+    api_key: str,
+    url: str,
+    extra_params: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Build the ScrapingBee query parameters, allowing caller-provided overrides.
+    """
+    base: Dict[str, Any] = {
+        "api_key": api_key,
+        "url": url,
+        # We default to *no JS render* for speed; caller can override.
+        "render_js": "false",
+    }
+    if extra_params:
+        # Caller wins on conflicts
+        base.update(extra_params)
+    return base
+
+
 async def _fetch_one_with_retries(
     session: aiohttp.ClientSession,
     api_key: str,
@@ -21,6 +41,8 @@ async def _fetch_one_with_retries(
     max_retries: int = 3,
     base_backoff: float = 1.5,
     timeout: int = DEFAULT_TIMEOUT,
+    extra_params: Optional[Dict[str, Any]] = None,
+    headers: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Fetch a single URL via ScrapingBee with retries on transient HTTP errors
@@ -33,28 +55,31 @@ async def _fetch_one_with_retries(
           "page_text": str | None,
           "error": str | None,
           "response_ms": float | None,
+          # extra metadata
+          "request_url": str,
+          "attempts": int,
+          "last_exception_type": str | None,
         }
 
     Behavior:
       - 429 / 5xx → retried up to max_retries; on final failure: error, no HTML.
       - 401 / 402 / 403 → treated as hard ScrapingBee errors, no retry.
-      - 404 / 410 / other 4xx → not retried, but HTML is returned and error is "".
+      - 404 / 410 / other 4xx → not retried, but HTML is returned and error is None.
       - Network / timeout exceptions → retried; final failure sets error, no HTML.
     """
-    params = {
-        "api_key": api_key,
-        "url": url,
-        "render_js": "false",
-    }
+    params = _build_params(api_key=api_key, url=url, extra_params=extra_params)
 
     last_error: Optional[str] = None
+    last_exception_type: Optional[str] = None
     start_time = time.perf_counter()
 
+    # We measure from first attempt to final result – full wall clock cost.
     for attempt in range(1, max_retries + 1):
         try:
             async with session.get(
                 SCRAPINGBEE_ENDPOINT,
                 params=params,
+                headers=headers,
                 timeout=timeout,
             ) as resp:
                 status = resp.status
@@ -76,6 +101,9 @@ async def _fetch_one_with_retries(
                             "page_text": None,
                             "error": last_error,
                             "response_ms": elapsed_ms,
+                            "request_url": url,
+                            "attempts": attempt,
+                            "last_exception_type": last_exception_type,
                         }
 
                     sleep_for = base_backoff * attempt
@@ -95,6 +123,9 @@ async def _fetch_one_with_retries(
                         "page_text": None,
                         "error": last_error,
                         "response_ms": elapsed_ms,
+                        "request_url": url,
+                        "attempts": attempt,
+                        "last_exception_type": last_exception_type,
                     }
 
                 # Soft 4xx (404/410 etc) or success:
@@ -105,9 +136,13 @@ async def _fetch_one_with_retries(
                     "page_text": text,
                     "error": None,
                     "response_ms": elapsed_ms,
+                    "request_url": url,
+                    "attempts": attempt,
+                    "last_exception_type": last_exception_type,
                 }
 
         except asyncio.TimeoutError as exc:
+            last_exception_type = type(exc).__name__
             last_error = f"ScrapingBee timeout: {exc!r}"
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
             if attempt == max_retries:
@@ -117,6 +152,9 @@ async def _fetch_one_with_retries(
                     "page_text": None,
                     "error": last_error,
                     "response_ms": elapsed_ms,
+                    "request_url": url,
+                    "attempts": attempt,
+                    "last_exception_type": last_exception_type,
                 }
 
             sleep_for = base_backoff * attempt
@@ -128,6 +166,7 @@ async def _fetch_one_with_retries(
 
         except Exception as exc:
             # DNS/SSL/network explosions
+            last_exception_type = type(exc).__name__
             last_error = f"ScrapingBee exception: {type(exc).__name__}: {exc}"
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
             if attempt == max_retries:
@@ -137,6 +176,9 @@ async def _fetch_one_with_retries(
                     "page_text": None,
                     "error": last_error,
                     "response_ms": elapsed_ms,
+                    "request_url": url,
+                    "attempts": attempt,
+                    "last_exception_type": last_exception_type,
                 }
 
             sleep_for = base_backoff * attempt
@@ -154,6 +196,9 @@ async def _fetch_one_with_retries(
         "page_text": None,
         "error": last_error or "unknown_error",
         "response_ms": elapsed_ms,
+        "request_url": url,
+        "attempts": max_retries,
+        "last_exception_type": last_exception_type,
     }
 
 
@@ -163,6 +208,9 @@ async def scrapingbee_fetch_many(
     concurrency: int = 10,
     max_retries: int = 3,
     timeout: int = DEFAULT_TIMEOUT,
+    base_backoff: float = 1.5,
+    extra_params: Optional[Dict[str, Any]] = None,
+    headers: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Fetch many URLs via ScrapingBee concurrently with a concurrency limit.
@@ -174,7 +222,29 @@ async def scrapingbee_fetch_many(
         "page_text": str | None,
         "error": str | None,
         "response_ms": float | None,
+        "request_url": str,
+        "attempts": int,
+        "last_exception_type": str | None,
       }
+
+    Parameters
+    ----------
+    urls:
+        Iterable of URLs to fetch.
+    api_key:
+        ScrapingBee API key.
+    concurrency:
+        Maximum concurrent in-flight requests.
+    max_retries:
+        Maximum attempts per URL on transient failures.
+    timeout:
+        Per-request timeout in seconds.
+    base_backoff:
+        Base backoff in seconds; actual sleep is base_backoff * attempt.
+    extra_params:
+        Optional additional ScrapingBee query parameters applied to every request.
+    headers:
+        Optional HTTP headers sent with every request.
     """
     url_list = list(urls)
     results: List[Dict[str, Any]] = [None] * len(url_list)  # type: ignore
@@ -189,7 +259,10 @@ async def scrapingbee_fetch_many(
                     api_key=api_key,
                     url=u,
                     max_retries=max_retries,
+                    base_backoff=base_backoff,
                     timeout=timeout,
+                    extra_params=extra_params,
+                    headers=headers,
                 )
 
         tasks = [asyncio.create_task(worker(i, u)) for i, u in enumerate(url_list)]
