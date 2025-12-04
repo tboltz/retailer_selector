@@ -1,3 +1,12 @@
 retail-selector-bot-294ddd38cfa6.json
 secrets.json
-retail-selector-bot-294ddd38cfa6.json
+
+# Excel files
+*.xlsx
+*.xls
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
