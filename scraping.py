@@ -208,6 +208,137 @@ async def _fetch_one_with_retries(
     }
 
 
+# scraping.py
+
+import asyncio
+import time
+from typing import Iterable, Dict, Any, List, Optional
+
+import aiohttp
+
+SCRAPINGBEE_ENDPOINT = "https://app.scrapingbee.com/api/v1/"
+DEFAULT_TIMEOUT = 60  # seconds – keep your old value if different
+
+TRANSIENT_STATUS = {429, 500, 502, 503, 504}
+
+
+async def _fetch_one_with_retries(
+    session: aiohttp.ClientSession,
+    api_key: str,
+    url: str,
+    max_retries: int = 3,
+    base_backoff: float = 1.5,
+    timeout: int = DEFAULT_TIMEOUT,
+    extra_params: Optional[Dict[str, str]] = None,
+    headers: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """
+    Single-URL ScrapingBee fetch with retry & backoff.
+    Returns a normalized result dict that the rest of your pipeline expects.
+    """
+    params_base: Dict[str, str] = {
+        "api_key": api_key,
+        "url": url,
+        # ScrapingBee timeout is in *seconds* or *ms* depending on plan.
+        # Here we just forward your global timeout value.
+        "timeout": str(timeout),
+    }
+    if extra_params:
+        params_base.update(extra_params)
+
+    last_exception: Optional[BaseException] = None
+    last_exception_type: Optional[str] = None
+
+    for attempt in range(1, max_retries + 1):
+        start = time.perf_counter()
+        try:
+            async with session.get(
+                SCRAPINGBEE_ENDPOINT,
+                params=params_base,
+                headers=headers,
+                timeout=timeout,
+            ) as resp:
+                elapsed_ms = (time.perf_counter() - start) * 1000.0
+                text = await resp.text()
+
+                status = resp.status
+                error_msg: Optional[str] = None
+
+                if status in TRANSIENT_STATUS and attempt < max_retries:
+                    # transient HTTP error – retry
+                    error_msg = f"ScrapingBee error: HTTP {status}"
+                    await asyncio.sleep(base_backoff * attempt)
+                else:
+                    # success or non-retryable error (404, 401, etc.)
+                    if status >= 400 and status not in TRANSIENT_STATUS:
+                        error_msg = f"ScrapingBee error: HTTP {status}"
+                    # Normal exit: return result for this attempt
+                    return {
+                        "status_code": status,
+                        "final_url": str(resp.url),
+                        "page_text": text if status == 200 else None,
+                        "error": error_msg,
+                        "response_ms": elapsed_ms,
+                        "request_url": url,
+                        "attempts": attempt,
+                        "last_exception_type": last_exception_type,
+                    }
+
+        except asyncio.TimeoutError as exc:
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            last_exception = exc
+            last_exception_type = type(exc).__name__
+            # ScrapingBee timed out on us
+            error_msg = "ScrapingBee timeout: TimeoutError()"
+
+            if attempt < max_retries:
+                await asyncio.sleep(base_backoff * attempt)
+            else:
+                return {
+                    "status_code": None,
+                    "final_url": url,
+                    "page_text": None,
+                    "error": error_msg,
+                    "response_ms": elapsed_ms,
+                    "request_url": url,
+                    "attempts": attempt,
+                    "last_exception_type": last_exception_type,
+                }
+
+        except Exception as exc:
+            # Network / DNS / SSL and other disasters
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            last_exception = exc
+            last_exception_type = type(exc).__name__
+            error_msg = f"ScrapingBee error: {type(exc).__name__}: {exc}"
+
+            if attempt < max_retries:
+                await asyncio.sleep(base_backoff * attempt)
+            else:
+                return {
+                    "status_code": None,
+                    "final_url": url,
+                    "page_text": None,
+                    "error": error_msg,
+                    "response_ms": elapsed_ms,
+                    "request_url": url,
+                    "attempts": attempt,
+                    "last_exception_type": last_exception_type,
+                }
+
+    # Should never hit here, but in case the loop logic changes later:
+    return {
+        "status_code": None,
+        "final_url": url,
+        "page_text": None,
+        "error": "ScrapingBee error: unknown_failure",
+        "response_ms": None,
+        "request_url": url,
+        "attempts": max_retries,
+        "last_exception_type": last_exception_type,
+    }
+
+
 async def scrapingbee_fetch_many(
     urls: Iterable[str],
     api_key: str,
@@ -215,13 +346,13 @@ async def scrapingbee_fetch_many(
     max_retries: int = 3,
     timeout: int = DEFAULT_TIMEOUT,
     base_backoff: float = 1.5,
-    extra_params: Dict[str, str] = {"render_js": "true"},
+    extra_params: Optional[Dict[str, str]] = None,
     headers: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Fetch many URLs via ScrapingBee concurrently with a concurrency limit.
 
-    Returns a list of result dicts in the same order as `urls`, each shaped like:
+    Result list is in the same order as `urls`, each entry shaped like:
 
         {
           "status_code": int | None,
@@ -233,26 +364,6 @@ async def scrapingbee_fetch_many(
           "attempts": int,
           "last_exception_type": str | None,
         }
-
-    Parameters
-    ----------
-    urls:
-        Iterable of URLs to fetch.
-    api_key:
-        ScrapingBee API key.
-    concurrency:
-        Maximum concurrent in-flight requests.
-    max_retries:
-        Maximum attempts per URL on transient failures.
-    timeout:
-        Per-request timeout in seconds.
-    base_backoff:
-        Base backoff in seconds; actual sleep is base_backoff * attempt.
-    extra_params:
-        Optional additional ScrapingBee query parameters applied to every request.
-        Example: {"render_js": "true"} for JS-heavy retailers.
-    headers:
-        Optional HTTP headers sent with every request.
     """
     url_list = list(urls)
     results: List[Dict[str, Any]] = [None] * len(url_list)  # type: ignore
