@@ -47,20 +47,6 @@ async def run_hybrid_pricer_async(
       3) ScrapingBee fetch for each URL.
       4) Hybrid parse (pattern + optional OpenAI HTML).
       5) Optionally upload updated map back to Google Sheet.
-
-    Parameters
-    ----------
-    scrapingbee_api_key: str
-        API key for ScrapingBee (from secrets.json).
-    limit: int | None
-        If provided (and row_indices is None), limit to first N rows.
-    upload: bool
-        If True, write updated Product↔Retailer Map back to Google.
-    concurrency: int
-        Max concurrent ScrapingBee requests.
-    row_indices: iterable[int] | None
-        0-based positional indices into the Product↔Retailer Map DataFrame.
-        These correspond to the sheet rows after the header row.
     """
     # 1) Download the live Product↔Retailer Map
     df = download_product_map()
@@ -184,12 +170,10 @@ async def run_hybrid_pricer_async(
             df.at[idx_in_df, "Price ($USD)"] = float("nan")
             df.at[idx_in_df, "Last Scan (UTC)"] = now_iso
             df.at[idx_in_df, "HTTP Status"] = str(
-                bee.get("status")
-                or bee.get("status_code")
-                or ""
+                bee.get("status_code") or bee.get("status") or ""
             )
             df.at[idx_in_df, "Parse Method"] = "error"
-            df.at[idx_in_df, "Response ms"] = float(bee.get("elapsed_ms") or 0.0)
+            df.at[idx_in_df, "Response ms"] = float(bee.get("response_ms") or 0.0)
             df.at[idx_in_df, "Last Error"] = f"parse_error: {e!r}"
             df.at[idx_in_df, "URL Status"] = "error"
             df.at[idx_in_df, "Validation Issues"] = "exception_in_parser"
@@ -201,13 +185,13 @@ async def run_hybrid_pricer_async(
         status = parsed.get("status") or ""
         http_status = (
             parsed.get("http_status")
-            or bee.get("status")
             or bee.get("status_code")
+            or bee.get("status")
         )
         elapsed_ms = (
             parsed.get("response_ms")
             or parsed.get("elapsed_ms")
-            or bee.get("elapsed_ms")
+            or bee.get("response_ms")
         )
         error_msg = parsed.get("error")
         val_issues = parsed.get("validation_issues") or ""
@@ -306,7 +290,6 @@ async def run_scan_from_gsheet_and_email(
     print("Preview of updated Product↔Retailer Map (first 10 rows):")
     try:
         from IPython.display import display
-
         display(updated_product_df.head(10))
     except Exception:
         print(updated_product_df.head(10))
