@@ -7,6 +7,8 @@ from typing import List, Dict, Any, Iterable, Optional
 
 import aiohttp
 
+from .logger import log
+
 # Base ScrapingBee endpoint
 SCRAPINGBEE_ENDPOINT = "https://app.scrapingbee.com/api/v1/"
 DEFAULT_TIMEOUT = 60  # seconds
@@ -48,8 +50,7 @@ async def _fetch_one_with_retries(
     headers: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
-    Fetch a single URL via ScrapingBee with retries on transient HTTP errors
-    (429, 500, 502, 503, 504).
+    Fetch a single URL via ScrapingBee with retries on transient HTTP errors.
 
     Normalized return shape:
 
@@ -59,25 +60,20 @@ async def _fetch_one_with_retries(
           "page_text": str | None,
           "error": str | None,
           "response_ms": float | None,
-          # extra metadata
           "request_url": str,
           "attempts": int,
           "last_exception_type": str | None,
         }
-
-    Behavior:
-      - 429 / 5xx → retried up to max_retries; on final failure: error, no HTML.
-      - 401 / 402 / 403 → treated as hard ScrapingBee errors, no retry.
-      - 404 / 410 / other 4xx → not retried, but HTML is returned and error is None.
-      - Network / timeout exceptions → retried; final failure sets error, no HTML.
     """
     params = _build_params(api_key=api_key, url=url, extra_params=extra_params)
 
     last_error: Optional[str] = None
     last_exception_type: Optional[str] = None
-    start_time = time.perf_counter()
+
+    log(f"starting fetch url={url}", context="scraping")
 
     for attempt in range(1, max_retries + 1):
+        start_time = time.perf_counter()
         try:
             async with session.get(
                 SCRAPINGBEE_ENDPOINT,
@@ -94,11 +90,21 @@ async def _fetch_one_with_retries(
                 elapsed_ms = (time.perf_counter() - start_time) * 1000.0
                 final_url = str(resp.url)
 
+                log(
+                    f"attempt={attempt} status={status} elapsed_ms={elapsed_ms:.1f} "
+                    f"request_url={url} final_url={final_url}",
+                    context="scraping",
+                )
+
                 # Transient errors → retry
                 if status in TRANSIENT_STATUS_CODES:
                     last_error = f"ScrapingBee error: HTTP {status}"
                     if attempt == max_retries:
-                        # Give up, no HTML, mark as error
+                        log(
+                            f"giving up on url={url} after {attempt} attempts, "
+                            f"error={last_error}",
+                            context="scraping",
+                        )
                         return {
                             "status_code": status,
                             "final_url": final_url,
@@ -111,9 +117,9 @@ async def _fetch_one_with_retries(
                         }
 
                     sleep_for = base_backoff * attempt
-                    print(
-                        f"[scraping] {last_error} on {url} "
-                        f"(attempt {attempt}/{max_retries}); retrying in {sleep_for:.1f}s"
+                    log(
+                        f"transient {status} on url={url}, retrying in {sleep_for:.1f}s",
+                        context="scraping",
                     )
                     await asyncio.sleep(sleep_for)
                     continue
@@ -121,6 +127,10 @@ async def _fetch_one_with_retries(
                 # Hard ScrapingBee errors we don't retry
                 if status in (401, 402, 403):
                     last_error = f"ScrapingBee error: HTTP {status}"
+                    log(
+                        f"hard error {status} on url={url}, not retrying",
+                        context="scraping",
+                    )
                     return {
                         "status_code": status,
                         "final_url": final_url,
@@ -134,6 +144,10 @@ async def _fetch_one_with_retries(
 
                 # Soft 4xx or success:
                 # keep HTML and do NOT set 'error' so parser/AI can run.
+                log(
+                    f"success/soft status={status} url={url} final_url={final_url}",
+                    context="scraping",
+                )
                 return {
                     "status_code": status,
                     "final_url": final_url,
@@ -151,6 +165,11 @@ async def _fetch_one_with_retries(
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
 
             if attempt == max_retries:
+                log(
+                    f"timeout final on url={url} after {attempt} attempts, "
+                    f"error={last_error}",
+                    context="scraping",
+                )
                 return {
                     "status_code": None,
                     "final_url": url,
@@ -163,19 +182,23 @@ async def _fetch_one_with_retries(
                 }
 
             sleep_for = base_backoff * attempt
-            print(
-                f"[scraping] timeout on {url} "
-                f"(attempt {attempt}/{max_retries}); retrying in {sleep_for:.1f}s"
+            log(
+                f"timeout on url={url}, attempt={attempt}, retrying in {sleep_for:.1f}s",
+                context="scraping",
             )
             await asyncio.sleep(sleep_for)
 
         except Exception as exc:
-            # DNS/SSL/network explosions
             last_exception_type = type(exc).__name__
             last_error = f"ScrapingBee exception: {type(exc).__name__}: {exc}"
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
 
             if attempt == max_retries:
+                log(
+                    f"exception final on url={url} after {attempt} attempts, "
+                    f"error={last_error}",
+                    context="scraping",
+                )
                 return {
                     "status_code": None,
                     "final_url": url,
@@ -188,14 +211,18 @@ async def _fetch_one_with_retries(
                 }
 
             sleep_for = base_backoff * attempt
-            print(
-                f"[scraping] exception on {url} "
-                f"(attempt {attempt}/{max_retries}); retrying in {sleep_for:.1f}s"
+            log(
+                f"exception on url={url}, attempt={attempt}, retrying in {sleep_for:.1f}s",
+                context="scraping",
             )
             await asyncio.sleep(sleep_for)
 
     # Should never really get here, but just in case
-    elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+    elapsed_ms = None
+    log(
+        f"fell through retry loop unexpectedly url={url} error={last_error}",
+        context="scraping",
+    )
     return {
         "status_code": None,
         "final_url": url,
@@ -220,41 +247,13 @@ async def scrapingbee_fetch_many(
 ) -> List[Dict[str, Any]]:
     """
     Fetch many URLs via ScrapingBee concurrently with a concurrency limit.
-
-    Returns a list of result dicts in the same order as `urls`, each shaped like:
-
-        {
-          "status_code": int | None,
-          "final_url": str | None,
-          "page_text": str | None,
-          "error": str | None,
-          "response_ms": float | None,
-          "request_url": str,
-          "attempts": int,
-          "last_exception_type": str | None,
-        }
-
-    Parameters
-    ----------
-    urls:
-        Iterable of URLs to fetch.
-    api_key:
-        ScrapingBee API key.
-    concurrency:
-        Maximum concurrent in-flight requests.
-    max_retries:
-        Maximum attempts per URL on transient failures.
-    timeout:
-        Per-request timeout in seconds.
-    base_backoff:
-        Base backoff in seconds; actual sleep is base_backoff * attempt.
-    extra_params:
-        Optional additional ScrapingBee query parameters applied to every request.
-        Example: {"render_js": "true"} for JS-heavy retailers.
-    headers:
-        Optional HTTP headers sent with every request.
     """
     url_list = list(urls)
+    log(
+        f"starting batch fetch for {len(url_list)} urls, concurrency={concurrency}",
+        context="scraping",
+    )
+
     results: List[Dict[str, Any]] = [None] * len(url_list)  # type: ignore
     semaphore = asyncio.Semaphore(max(1, concurrency))
 
@@ -276,4 +275,5 @@ async def scrapingbee_fetch_many(
         tasks = [asyncio.create_task(worker(i, u)) for i, u in enumerate(url_list)]
         await asyncio.gather(*tasks)
 
+    log("batch fetch complete", context="scraping")
     return results
