@@ -1,0 +1,43 @@
+{"timestamp": "2025-12-05T20:52:42.909832", "mode": "test", "context": "orchestrator", "message": "run_mode=test", "extra": {}}
+{"timestamp": "2025-12-05T20:52:43.211467", "mode": "test", "context": "orchestrator", "message": "Loading secrets...", "extra": {}}
+{"timestamp": "2025-12-05T20:52:45.279845", "mode": "test", "context": "orchestrator", "message": "Downloaded Product↔Retailer Map for sanity.", "extra": {}}
+{"timestamp": "2025-12-05T20:52:45.279845", "mode": "test", "context": "orchestrator", "message": "Downloading Google Sheet → XLSX", "extra": {}}
+{"timestamp": "2025-12-05T20:53:00.220274", "mode": "test", "context": "orchestrator", "message": "Running workbook scan...", "extra": {}}
+{"timestamp": "2025-12-05T20:53:00.220274", "mode": "test", "context": "workbook", "message": "Loading workbook: C:\\Users\\suzan\\Projects\\card\\Retail Arbitrage Targeting List 20251205-155239.xlsx", "extra": {}}
+{"timestamp": "2025-12-05T20:53:04.484974", "mode": "test", "context": "workbook", "message": "Loaded sheet 'EBAY SALES API--->' with 0 rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:04.494974", "mode": "test", "context": "workbook", "message": "Loaded sheet 'API_Input' with 174 rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:04.495974", "mode": "test", "context": "workbook", "message": "Loaded sheet 'Raw Completed Sales' with 0 rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:08.273278", "mode": "test", "context": "workbook", "message": "Loaded sheet 'Raw_Import' with 16942 rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:08.329475", "mode": "test", "context": "workbook", "message": "Loaded sheet 'Purchases' with 149 rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:08.337474", "mode": "test", "context": "workbook", "message": "Loaded sheet 'Shipment Planning - UK' with 15 rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:08.346475", "mode": "test", "context": "workbook", "message": "Loaded sheet 'Shipment Planning - DE' with 18 rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:08.700039", "mode": "test", "context": "workbook", "message": "Loaded sheet 'Alerts' with 0 rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:08.701105", "mode": "test", "context": "workbook", "message": "Loaded sheet 'SKU Map' with 13 rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:08.702104", "mode": "test", "context": "workbook", "message": "Loaded sheet 'REVISIT' with 22 rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:08.714104", "mode": "test", "context": "workbook", "message": "Loaded sheet 'Active Watch List' with 496 rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:08.729168", "mode": "test", "context": "workbook", "message": "Loaded sheet 'Retailers' with 263 rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:09.363049", "mode": "test", "context": "workbook", "message": "Loaded sheet 'Product↔Retailer Map' with 17513 rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:11.480748", "mode": "test", "context": "workbook", "message": "Loaded sheet 'Error Log' with 28319 rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:11.501813", "mode": "test", "context": "workbook", "message": "Loaded sheet 'State' with 1536 rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:11.504812", "mode": "test", "context": "workbook", "message": "Loaded sheet 'Registered Accounts' with 118 rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:11.505875", "mode": "test", "context": "workbook", "message": "Loaded sheet 'Website Finder' with 50 rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:11.505875", "mode": "test", "context": "workbook", "message": "Product↔Retailer Map loaded from workbook.", "extra": {}}
+{"timestamp": "2025-12-05T20:53:11.511874", "mode": "test", "context": "workbook", "message": "Filtered to 17513 rows with valid search_url", "extra": {}}
+{"timestamp": "2025-12-05T20:53:11.513583", "mode": "test", "context": "workbook", "message": "Limit applied: scanning first 1 valid rows", "extra": {}}
+{"timestamp": "2025-12-05T20:53:11.514589", "mode": "test", "context": "workbook", "message": "Fetching 1 URLs (concurrency=2)", "extra": {}}
+{"timestamp": "2025-12-05T20:53:11.514589", "mode": "test", "context": "scraping", "message": "starting batch fetch for 1 urls, concurrency=2", "extra": {}}
+{"timestamp": "2025-12-05T20:53:11.514589", "mode": "test", "context": "scraping", "message": "starting fetch url=https://store.401games.ca/products/marvel-champions-living-card-game-storm-hero-pack", "extra": {}}
+{"timestamp": "2025-12-05T20:53:18.041204", "mode": "test", "context": "scraping", "message": "attempt=1 status=200 elapsed_ms=6526.3 request_url=https://store.401games.ca/products/marvel-champions-living-card-game-storm-hero-pack final_url=https://app.scrapingbee.com/api/v1/?api_key=GYK93BYBSI89SRFLKN1XJ60POZPA7ZEPPROO9H0HVO5W7D8FFH3SBZWS92ZXO94DGR4EAPQTV2KOYWRA&url=https://store.401games.ca/products/marvel-champions-living-card-game-storm-hero-pack&render_js=true", "extra": {}}
+{"timestamp": "2025-12-05T20:53:18.041204", "mode": "test", "context": "scraping", "message": "success/soft status=200 url=https://store.401games.ca/products/marvel-champions-living-card-game-storm-hero-pack final_url=https://app.scrapingbee.com/api/v1/?api_key=GYK93BYBSI89SRFLKN1XJ60POZPA7ZEPPROO9H0HVO5W7D8FFH3SBZWS92ZXO94DGR4EAPQTV2KOYWRA&url=https://store.401games.ca/products/marvel-champions-living-card-game-storm-hero-pack&render_js=true", "extra": {}}
+{"timestamp": "2025-12-05T20:53:18.041204", "mode": "test", "context": "scraping", "message": "batch fetch complete", "extra": {}}
+{"timestamp": "2025-12-05T20:53:18.042202", "mode": "test", "context": "parsing", "message": "retailer_family=shopify host=app.scrapingbee.com", "extra": {}}
+{"timestamp": "2025-12-05T20:53:18.083200", "mode": "test", "context": "parsing", "message": "jsonld price=24.95 stock=N availability=OutOfStock", "extra": {}}
+{"timestamp": "2025-12-05T20:53:18.083200", "mode": "test", "context": "parsing", "message": "parse_html using jsonld_product price=24.95 stock=N", "extra": {}}
+{"timestamp": "2025-12-05T20:53:18.083200", "mode": "test", "context": "parsing", "message": "pattern_parse success url=https://app.scrapingbee.com/api/v1/?api_key=GYK93BYBSI89SRFLKN1XJ60POZPA7ZEPPROO9H0HVO5W7D8FFH3SBZWS92ZXO94DGR4EAPQTV2KOYWRA&url=https://store.401games.ca/products/marvel-champions-living-card-game-storm-hero-pack&render_js=true price=24.95 stock=N source=jsonld_product", "extra": {}}
+{"timestamp": "2025-12-05T20:53:18.083200", "mode": "test", "context": "workbook", "message": "row=0 url=https://store.401games.ca/products/marvel-champions-living-card-game-storm-hero-pack price=24.95 stock=N method=ai_html status=ai_ok http=200", "extra": {}}
+{"timestamp": "2025-12-05T20:53:18.083200", "mode": "test", "context": "workbook", "message": "Saving updated workbook → C:\\Users\\suzan\\Projects\\card\\Retail Arbitrage Targeting List 20251205-155239.xlsx", "extra": {}}
+{"timestamp": "2025-12-05T20:53:25.270461", "mode": "test", "context": "workbook", "message": "Workbook saved.", "extra": {}}
+{"timestamp": "2025-12-05T20:53:25.270461", "mode": "test", "context": "workbook", "message": "Workbook scan complete.", "extra": {}}
+{"timestamp": "2025-12-05T20:53:25.271462", "mode": "test", "context": "orchestrator", "message": "Upload disabled (--no-upload)", "extra": {}}
+{"timestamp": "2025-12-05T20:53:25.271462", "mode": "test", "context": "orchestrator", "message": "Emailing workbook to boltzt@outlook.com", "extra": {}}
+{"timestamp": "2025-12-05T20:53:34.503520", "mode": "test", "context": "orchestrator", "message": "Pipeline complete.", "extra": {}}
