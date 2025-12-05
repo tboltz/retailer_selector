@@ -1,0 +1,7 @@
+{"timestamp": "2025-12-05T05:16:05.451712", "mode": "debug", "context": "orchestrator", "message": "run_mode=debug", "extra": {}}
+{"timestamp": "2025-12-05T05:16:05.744459", "mode": "debug", "context": "orchestrator", "message": "Debug mode: scanning rows [0]", "extra": {}}
+{"timestamp": "2025-12-05T05:16:05.744459", "mode": "debug", "context": "orchestrator", "message": "Downloading Product↔Retailer Map...", "extra": {}}
+{"timestamp": "2025-12-05T05:16:07.329598", "mode": "debug", "context": "orchestrator", "message": "Filtered to 17513 valid URLs", "extra": {}}
+{"timestamp": "2025-12-05T05:16:07.330598", "mode": "debug", "context": "orchestrator", "message": "Debug mode: filtered rows [0]", "extra": {}}
+{"timestamp": "2025-12-05T05:16:07.332598", "mode": "debug", "context": "orchestrator", "message": "row=0 missing search_url", "extra": {}}
+{"timestamp": "2025-12-05T05:16:07.332598", "mode": "debug", "context": "orchestrator", "message": "No valid URLs to scan (all blank).", "extra": {}}
