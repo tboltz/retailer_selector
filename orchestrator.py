@@ -117,12 +117,23 @@ async def run_hybrid_pricer_async(
 
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    # Parse each row
-    for url, df_idx, bee in zip(urls, row_lookup, bee_results):
+    # -------- Parse each row with progress output --------
+    total = len(row_lookup)
+
+    for idx, (url, df_idx, bee) in enumerate(zip(urls, row_lookup, bee_results), start=1):
         row = df.loc[df_idx]
+
         product_id = str(row.get("product_id") or row.get("Product ID") or "").strip()
         description = str(row.get("DESCRIPTION") or row.get("product_name") or "").strip()
         retailer_key = str(row.get("retailer_key") or row.get("Retailer") or "").strip()
+
+        # progress print + log
+        msg = (
+            f"[progress] {idx}/{total} "
+            f"row={df_idx} pid={product_id} retailer={retailer_key} url={url}"
+        )
+        print(msg, flush=True)
+        log(msg, context="orchestrator")
 
         try:
             parsed = hybrid_lookup_from_bee_result(
@@ -147,7 +158,7 @@ async def run_hybrid_pricer_async(
 
             log(
                 f"row={df_idx} pid={product_id} retailer={retailer_key} EXCEPTION={e!r}",
-                context="orchestrator"
+                context="orchestrator",
             )
             continue
 
@@ -161,7 +172,6 @@ async def run_hybrid_pricer_async(
         error_msg = parsed.get("error") or ""
         val_issues = parsed.get("validation_issues") or ""
 
-        # Normalize stock flag
         if in_stock in (True, "Y", "y", "yes"):
             stock_flag = "Y"
         elif in_stock in (False, "N", "n", "no"):
@@ -181,9 +191,11 @@ async def run_hybrid_pricer_async(
 
         log(
             f"row_result row={df_idx} pid={product_id} retailer={retailer_key} "
-            f"url={url} price={price} stock={stock_flag} method={parse_method} status={status} err={error_msg}",
+            f"url={url} price={price} stock={stock_flag} method={parse_method} "
+            f"status={status} err={error_msg}",
             context="orchestrator",
         )
+
 
     if upload:
         log("Uploading updated Product↔Retailer Map to Google Sheets...", context="orchestrator")
