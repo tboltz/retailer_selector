@@ -9,10 +9,8 @@ from typing import Dict, Any, Optional
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
-# IMPORTANT: Do NOT import client directly (it freezes at None)
-# BAD: from .config import client, OPENAI_MODEL
-# GOOD:
 from . import config
+from .logger import log
 
 
 def parse_shopify_variant_json(page_text: str) -> Optional[Dict[str, Any]]:
@@ -42,16 +40,25 @@ def parse_shopify_variant_json(page_text: str) -> Optional[Dict[str, Any]]:
         stock = "Y" if available else "N"
     elif isinstance(qty, (int, float)):
         stock = "Y" if qty > 0 else "N"
+
+    log(
+        f"shopify_variant price={price} stock={stock}",
+        context="parsing",
+    )
     return {"price": price, "stock": stock, "raw": v}
 
 
 def detect_retailer_family(url: str, html: str) -> str:
     host = urlparse(url).netloc.lower()
     if "amazon." in host:
-        return "amazon"
-    if "cdn.shopify.com" in html or "Shopify.theme" in html or "window.Shopify" in html:
-        return "shopify"
-    return "generic"
+        family = "amazon"
+    elif "cdn.shopify.com" in html or "Shopify.theme" in html or "window.Shopify" in html:
+        family = "shopify"
+    else:
+        family = "generic"
+
+    log(f"retailer_family={family} host={host}", context="parsing")
+    return family
 
 
 def parse_jsonld_price_stock(html: str) -> Optional[Dict[str, Any]]:
@@ -127,6 +134,10 @@ def parse_jsonld_price_stock(html: str) -> Optional[Dict[str, Any]]:
             elif any(k in avail_lower for k in ["outofstock", "soldout", "oos", "preorder", "backorder"]):
                 stock = "N"
 
+            log(
+                f"jsonld price={price} stock={stock} availability={avail}",
+                context="parsing",
+            )
             return {"price": price, "stock": stock, "raw": node}
     return None
 
@@ -186,8 +197,19 @@ def parse_generic_price_stock(html: str) -> Optional[Dict[str, Any]]:
             except Exception:
                 price = None
 
+    # default logic: price → Y if no explicit stock
+    if price is not None and stock is None:
+        stock = "Y"
+
     if price is None and stock is None:
+        log("generic parser found no price and no stock", context="parsing")
         return None
+
+    log(
+        f"generic parser price={price} stock={stock} "
+        f"candidates_sale={sale_candidates} candidates_generic={generic_candidates}",
+        context="parsing",
+    )
 
     return {
         "price": price,
@@ -207,6 +229,11 @@ def parse_html_price_stock(url: str, html: str) -> Optional[Dict[str, Any]]:
     if family == "shopify":
         shopify_res = parse_shopify_variant_json(html)
         if shopify_res and (shopify_res["price"] is not None or shopify_res["stock"] is not None):
+            log(
+                f"parse_html using shopify_variants price={shopify_res['price']} "
+                f"stock={shopify_res['stock']}",
+                context="parsing",
+            )
             return {
                 "price": shopify_res["price"],
                 "stock": shopify_res["stock"],
@@ -215,6 +242,11 @@ def parse_html_price_stock(url: str, html: str) -> Optional[Dict[str, Any]]:
 
     jsonld_res = parse_jsonld_price_stock(html)
     if jsonld_res:
+        log(
+            f"parse_html using jsonld_product price={jsonld_res['price']} "
+            f"stock={jsonld_res['stock']}",
+            context="parsing",
+        )
         return {
             "price": jsonld_res["price"],
             "stock": jsonld_res["stock"],
@@ -223,12 +255,18 @@ def parse_html_price_stock(url: str, html: str) -> Optional[Dict[str, Any]]:
 
     generic_res = parse_generic_price_stock(html)
     if generic_res:
+        log(
+            f"parse_html using generic_text price={generic_res['price']} "
+            f"stock={generic_res['stock']}",
+            context="parsing",
+        )
         return {
             "price": generic_res["price"],
             "stock": generic_res["stock"],
             "source": "generic_text",
         }
 
+    log("parse_html could not extract price/stock; falling back to AI", context="parsing")
     return None
 
 
@@ -254,7 +292,6 @@ def hybrid_lookup_from_bee_result(
     debug: bool = False,
 ) -> Dict[str, Any]:
 
-    # FIXED: read the shared client
     if config.client is None:
         raise RuntimeError("OpenAI client not initialized. Call load_secrets() first.")
 
@@ -263,9 +300,14 @@ def hybrid_lookup_from_bee_result(
     html = bee.get("page_text", "") or ""
     final_url = bee.get("final_url", original_url)
     bee_error = bee.get("error")
+    http_status = bee.get("status_code") or bee.get("status")
 
     if bee_error:
         elapsed_ms = int((time.time() - start) * 1000)
+        log(
+            f"bee_error url={final_url} status={http_status} error={bee_error}",
+            context="parsing",
+        )
         return {
             "price": None,
             "stock": None,
@@ -277,9 +319,15 @@ def hybrid_lookup_from_bee_result(
             "method": "ai_html",
         }
 
+    # pattern / HTML heuristic path
     parsed = parse_html_price_stock(final_url, html)
     if parsed and (parsed["price"] is not None or parsed["stock"] is not None):
         elapsed_ms = int((time.time() - start) * 1000)
+        log(
+            f"pattern_parse success url={final_url} price={parsed['price']} "
+            f"stock={parsed['stock']} source={parsed['source']}",
+            context="parsing",
+        )
         return {
             "price": parsed["price"],
             "stock": parsed["stock"],
@@ -292,6 +340,10 @@ def hybrid_lookup_from_bee_result(
         }
 
     snippet = html[:15000]
+    log(
+        f"invoking AI fallback url={final_url} len_snippet={len(snippet)}",
+        context="parsing",
+    )
 
     system_prompt = (
         "You are a precise retail price and stock extractor. "
@@ -300,7 +352,7 @@ def hybrid_lookup_from_bee_result(
         "- Whether the product is in stock.\n\n"
         "IMPORTANT RULES:\n"
         "- Do NOT convert currencies. Return the numeric price exactly as it appears.\n"
-        "- Ignore discount amounts like 'Save £4.74', 'You save £X', or '% off'.\nl"
+        "- Ignore discount amounts like 'Save £4.74', 'You save £X', or '% off'.\n"
         "- If you cannot find a reliable price, set price=null.\n\n"
         "Return ONLY a JSON object."
     )
@@ -356,6 +408,14 @@ Return JSON:
             else:
                 in_stock = "unknown"
 
+        if in_stock == "unknown" and price is not None:
+            in_stock = "Y"
+
+        log(
+            f"AI parse url={final_url} price={price} in_stock={in_stock} notes={notes[:120]}",
+            context="parsing",
+        )
+
         return {
             "price": price,
             "stock": None if in_stock == "unknown" else in_stock,
@@ -369,6 +429,10 @@ Return JSON:
 
     except Exception as e:
         elapsed_ms = int((time.time() - start) * 1000)
+        log(
+            f"AI HTML parse error url={final_url} exc={e!r}",
+            context="parsing",
+        )
         return {
             "price": None,
             "stock": None,
